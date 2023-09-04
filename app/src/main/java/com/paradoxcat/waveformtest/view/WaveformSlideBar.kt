@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.util.AttributeSet
+import android.view.MotionEvent
 import android.view.View
 import java.nio.ByteBuffer
 import kotlin.math.pow
@@ -22,57 +23,84 @@ class WaveformSlideBar(context: Context, attrs: AttributeSet) : View(context, at
         const val SAMPLE_DOT_RADIUS = 2.0f
         private val MAX_VALUE = 2.0f.pow(16.0f) - 1 // max 16-bit value
         val INV_MAX_VALUE = 1.0f / MAX_VALUE // multiply with this to get % of max value
-
-        /** Transform raw audio into drawable array of integers */
-        fun transformRawData(buffer: ByteBuffer): IntArray {
-            val nSamples = buffer.limit() / 2 // assuming 16-bit PCM mono
-            val waveForm = IntArray(nSamples)
-            for (i in 1 until buffer.limit() step 2) {
-                waveForm[i / 2] = (buffer[i].toInt() shl 8) or buffer[i - 1].toInt()
-            }
-            return waveForm
-        }
     }
+
+    private var sampleDistance: Float = 0f
+    private var maxAmplitude: Float = 0f
+    private var amplitudeScaleFactor: Float = 0f
 
     private val linePaint = Paint()
     private val sampleDotPaint = Paint()
     private lateinit var waveForm: IntArray
+
+    // Playback-related properties
+    private var isPlaying = false
+    private var playbackPosition: Float = 0.0f
+    private var playbackMarkerX: Float = 0.0f
 
     init {
         linePaint.color = Color.rgb(0, 255, 0)
         sampleDotPaint.color = Color.rgb(255, 0, 0)
     }
 
-    override fun onDraw(canvas: Canvas?) {
+    override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        if (::waveForm.isInitialized) {
-            val sampleDistance =
-                (width - LEFT_RIGHT_PADDING * 2) / (waveForm.size - 1) // distance between centers of 2 samples
-            val maxAmplitude = height / 2.0f - TOP_BOTTOM_PADDING // max amount of px from middle to the edge minus pad
-            val amplitudeScaleFactor = INV_MAX_VALUE * maxAmplitude // multiply by this to get number of px from middle
+        // Calculate amplitude scale factor
+        val centerY = height / 2.0f
+        maxAmplitude = centerY - TOP_BOTTOM_PADDING
+        amplitudeScaleFactor = maxAmplitude / MAX_VALUE
 
+        // Draw waveform
+        if (::waveForm.isInitialized) {
             var prevX = LEFT_RIGHT_PADDING
-            var prevY = height / 2.0f - waveForm[0] * amplitudeScaleFactor
-            canvas?.drawCircle(prevX, prevY, SAMPLE_DOT_RADIUS, sampleDotPaint)
+            var prevY = centerY - waveForm[0] * amplitudeScaleFactor
             for (i in 1 until waveForm.size) {
                 val x = LEFT_RIGHT_PADDING + i * sampleDistance
-                val y = height / 2.0f - waveForm[i] * amplitudeScaleFactor // y axis starts on top and is pointed down
-                canvas?.drawCircle(x, y, SAMPLE_DOT_RADIUS, sampleDotPaint)
-                canvas?.drawLine(prevX, prevY, x, y, linePaint)
+                val y = centerY - waveForm[i] * amplitudeScaleFactor
+                canvas.drawLine(prevX, prevY, x, y, linePaint)
                 prevX = x
                 prevY = y
             }
         }
+
+        // Draw playback position marker
+        if (isPlaying) {
+            canvas.drawLine(playbackMarkerX, 0f, playbackMarkerX, height.toFloat(), linePaint)
+        }
     }
 
-    /**
-     * Set raw audio data and draw it.
-     * @param buffer -- raw audio buffer must be 16-bit samples packed together (mono, 16-bit PCM). Sample rate does
-     *                  not matter, since we are not rendering any time-related information yet.
-     */
-    fun setData(buffer: ByteBuffer) {
-        waveForm = transformRawData(buffer)
+    fun setData(data: IntArray) {
+        waveForm = data
+        sampleDistance = (width - LEFT_RIGHT_PADDING * 2) / (waveForm.size - 1)
         invalidate()
+    }
+
+    fun updatePlaybackPosition(position: Float) {
+        playbackPosition = position
+        playbackMarkerX = LEFT_RIGHT_PADDING + position * (width - LEFT_RIGHT_PADDING * 2)
+        invalidate()
+    }
+
+    fun togglePlayback() {
+        isPlaying = !isPlaying
+        invalidate()
+    }
+
+    private fun isTouchWithinWaveform(x: Float, y: Float): Boolean {
+        return x >= LEFT_RIGHT_PADDING && x <= width - LEFT_RIGHT_PADDING && y >= 0f && y <= height.toFloat()
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.action) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                if (isTouchWithinWaveform(event.x, event.y)) {
+                    val position = (event.x - LEFT_RIGHT_PADDING) / (width - LEFT_RIGHT_PADDING * 2)
+                    updatePlaybackPosition(position)
+                }
+                return true
+            }
+        }
+        return false
     }
 }
